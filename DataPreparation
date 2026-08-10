@@ -1,0 +1,358 @@
+import os
+import glob
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+
+# === Paths ===
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+TRIMMED_DIR = os.path.join(SCRIPT_DIR, "Trimmed")
+FILTERED_DIR = os.path.join(SCRIPT_DIR, "Filtered")
+PLOT_FILE = os.path.join(SCRIPT_DIR, "SERS_Spectra_Overlay.png")
+
+# === Cross-validation output directory ===
+
+BASE_PATH = (
+    "/home/elhamm/links/projects/def-qianl/elhamm/"
+    "AI-CysConcentrations-SERS/Real-SERS-Data"
+)
+
+CROSS_VALIDATION_DIR = os.path.join(BASE_PATH, "CrossValidationData")
+
+
+# === Config ===
+
+HEADER_KEY = "Pixel;Wavelength;Wavenumber"
+FILTER_START_ROW = 551
+REQUIRED_COLUMNS = ['Raman Shift', 'Dark Subtracted #1']
+
+
+# === Create output folders ===
+
+for folder in [
+    TRIMMED_DIR,
+    FILTERED_DIR,
+    CROSS_VALIDATION_DIR
+]:
+    os.makedirs(folder, exist_ok=True)
+
+
+# === Trim files ===
+
+def trim_file_at_header(filepath):
+    with open(filepath, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+
+    header_index = next(
+        (i for i, line in enumerate(lines) if HEADER_KEY in line),
+        -1
+    )
+
+    if header_index == -1:
+        print(f"Header not found in {filepath}")
+        return None
+
+    trimmed_path = os.path.join(
+        TRIMMED_DIR,
+        os.path.basename(filepath)
+    )
+
+    with open(trimmed_path, 'w', encoding='utf-8') as f:
+        f.writelines(lines[header_index + 1:])
+
+    print(f"Trimmed: {filepath} to {trimmed_path}")
+
+    return trimmed_path
+
+
+# === Filter files ===
+
+def filter_columns_and_save(filepath):
+    try:
+        df = pd.read_csv(
+            filepath,
+            sep=';',
+            engine='python'
+        )
+
+        if df.shape[0] <= FILTER_START_ROW or df.shape[1] <= 7:
+            raise ValueError("Insufficient data")
+
+        df_subset = df.iloc[
+            FILTER_START_ROW:,
+            [3, 7]
+        ].copy()
+
+        df_subset.columns = REQUIRED_COLUMNS
+
+        base = os.path.splitext(
+            os.path.basename(filepath)
+        )[0]
+
+        filtered_csv = os.path.join(
+            FILTERED_DIR,
+            base + ".csv"
+        )
+
+        df_subset.to_csv(
+            filtered_csv,
+            index=False
+        )
+
+        print(
+            f"Filtered: {filepath} to {filtered_csv}"
+        )
+
+        return filtered_csv
+
+    except Exception as e:
+        print(f"Failed to process {filepath}: {e}")
+        return None
+
+
+# === Plot spectra ===
+
+def plot_filtered_spectra(files):
+    plt.figure(figsize=(12, 6))
+
+    for file_path in files:
+        try:
+            df = pd.read_csv(file_path)
+
+            plt.plot(
+                df['Raman Shift'],
+                df['Dark Subtracted #1'],
+                label=os.path.splitext(
+                    os.path.basename(file_path)
+                )[0],
+                linewidth=1
+            )
+
+        except Exception as e:
+            print(
+                f"Could not plot {file_path}: {e}"
+            )
+
+    plt.xlabel("Raman Shift (cm^-1)")
+    plt.ylabel("Intensity (a.u.)")
+    plt.title("SERS Spectra")
+
+    # plt.legend(
+    #     fontsize='small',
+    #     loc='upper right'
+    # )
+
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(PLOT_FILE)
+    plt.close()
+
+    print(f"Plot saved: {PLOT_FILE}")
+
+
+# === Convert all filtered CSV files to .npy ===
+
+def convert_all_csv_to_npy():
+
+    print(
+        "Converting all filtered CSV files to .npy files..."
+    )
+
+    files = sorted(
+        glob.glob(
+            os.path.join(
+                FILTERED_DIR,
+                "*.csv"
+            )
+        )
+    )
+
+    saved = 0
+    failed = 0
+
+    for file_path in files:
+        try:
+            df = pd.read_csv(file_path)
+
+            signal = df[
+                'Dark Subtracted #1'
+            ].values
+
+            stem = os.path.splitext(
+                os.path.basename(file_path)
+            )[0]
+
+            # Keep the existing AAC_Chrome_ prefix
+            npy_filename = (
+                "AAC_Chrome_"
+                + stem
+                + ".npy"
+            )
+
+            output_path = os.path.join(
+                CROSS_VALIDATION_DIR,
+                npy_filename
+            )
+
+            np.save(
+                output_path,
+                np.expand_dims(signal, axis=0)
+            )
+
+            saved += 1
+
+            print(
+                f"Saved: {output_path}"
+            )
+
+        except Exception as e:
+            failed += 1
+            print(
+                f"Failed to convert {file_path}: {e}"
+            )
+
+    print(
+        f"\nSaved {saved} .npy files to:"
+    )
+
+    print(
+        f"   {CROSS_VALIDATION_DIR}"
+    )
+
+    if failed:
+        print(
+            f"Failed to convert {failed} files."
+        )
+
+
+# === Print shape from one sample file per folder ===
+
+def print_sample_file_shape(
+    folder,
+    ext,
+    parser='pandas'
+):
+    files = sorted(
+        glob.glob(
+            os.path.join(
+                folder,
+                f"*{ext}"
+            )
+        )
+    )
+
+    print(
+        f"\nFolder: "
+        f"{os.path.basename(folder)} "
+        f"({len(files)} files)"
+    )
+
+    if not files:
+        print("No files found.")
+        return
+
+    try:
+
+        if parser == 'pandas':
+
+            df = pd.read_csv(
+                files[0]
+            )
+
+            print(
+                f"File shape: "
+                f"{df.shape[0]} rows x "
+                f"{df.shape[1]} columns"
+            )
+
+        elif parser == 'numpy':
+
+            arr = np.load(
+                files[0]
+            )
+
+            print(
+                f"File shape: {arr.shape}"
+            )
+
+    except Exception as e:
+
+        print(
+            f"Could not read "
+            f"{files[0]}: {e}"
+        )
+
+
+# === Main ===
+
+def main():
+
+    print("Starting pipeline...\n")
+
+    np.random.seed(42)
+
+    # === Trim all .txt files ===
+
+    trimmed = [
+        trim_file_at_header(f)
+        for f in glob.glob("*.txt")
+    ]
+
+    trimmed = [
+        f for f in trimmed
+        if f
+    ]
+
+    # === Filter all trimmed files ===
+
+    filtered = [
+        filter_columns_and_save(f)
+        for f in trimmed
+    ]
+
+    filtered = [
+        f for f in filtered
+        if f
+    ]
+
+    # === Plot filtered spectra ===
+
+    plot_filtered_spectra(filtered)
+
+    # === Convert every filtered CSV to .npy ===
+
+    convert_all_csv_to_npy()
+
+    # === Summary of file shapes ===
+
+    print(
+        "\nSummary of File Shapes:"
+    )
+
+    print_sample_file_shape(
+        TRIMMED_DIR,
+        ".txt",
+        parser='pandas'
+    )
+
+    print_sample_file_shape(
+        FILTERED_DIR,
+        ".csv",
+        parser='pandas'
+    )
+
+    print_sample_file_shape(
+        CROSS_VALIDATION_DIR,
+        ".npy",
+        parser='numpy'
+    )
+
+    print(
+        "\nAll tasks complete."
+    )
+
+
+if __name__ == "__main__":
+    main()
