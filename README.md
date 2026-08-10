@@ -33,3 +33,12 @@ Applications:
 SHAP Analysis/
 Noise Study/
 
+Setup
+Create an environment:
+
+Option A: pip python -m venv .venv macOS/Linux: source .venv/bin/activate Windows: .venv\Scripts\activate
+
+pip install -r requirements.txt
+
+Option B: conda conda create -n sers python=3.10 -y conda activate sers pip install -r requirements.txt
+
